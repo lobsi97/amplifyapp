@@ -335,13 +335,36 @@ function wpri_restore_post( $post_id ) {
    4. AJAX HANDLERS
    ========================================================================= */
 
-add_action( 'wp_ajax_wpri_preview', function () {
-	check_ajax_referer( 'wpri_ajax', 'nonce' );
-	$id = absint( $_POST['post_id'] ?? 0 );
-	if ( ! $id || ! current_user_can( 'edit_post', $id ) ) {
-		wp_send_json_error( array( 'message' => 'Permissions insuffisantes.' ) );
+/**
+ * Shared AJAX bootstrap: clean output buffer, verify nonce, get post ID.
+ * Returns post ID on success, or sends JSON error and dies.
+ */
+function wpri_ajax_bootstrap() {
+	// Catch any stray PHP output (notices, warnings) that would break JSON.
+	if ( ob_get_level() ) {
+		ob_clean();
 	}
-	$r = wpri_rephrase_post( $id, true );
+	ob_start();
+
+	$nonce = isset( $_POST['_wpri_nonce'] ) ? sanitize_text_field( $_POST['_wpri_nonce'] ) : '';
+	if ( ! wp_verify_nonce( $nonce, 'wpri_ajax' ) ) {
+		ob_end_clean();
+		wp_send_json_error( array( 'message' => 'Nonce invalide. Rechargez la page et réessayez.' ) );
+	}
+
+	$id = isset( $_POST['post_id'] ) ? absint( $_POST['post_id'] ) : 0;
+	if ( ! $id || ! current_user_can( 'edit_post', $id ) ) {
+		ob_end_clean();
+		wp_send_json_error( array( 'message' => 'Permissions insuffisantes ou article introuvable.' ) );
+	}
+
+	return $id;
+}
+
+add_action( 'wp_ajax_wpri_preview', function () {
+	$id = wpri_ajax_bootstrap();
+	$r  = wpri_rephrase_post( $id, true );
+	ob_end_clean();
 	if ( is_wp_error( $r ) ) {
 		wp_send_json_error( array( 'message' => $r->get_error_message() ) );
 	}
@@ -349,12 +372,9 @@ add_action( 'wp_ajax_wpri_preview', function () {
 } );
 
 add_action( 'wp_ajax_wpri_apply', function () {
-	check_ajax_referer( 'wpri_ajax', 'nonce' );
-	$id = absint( $_POST['post_id'] ?? 0 );
-	if ( ! $id || ! current_user_can( 'edit_post', $id ) ) {
-		wp_send_json_error( array( 'message' => 'Permissions insuffisantes.' ) );
-	}
-	$r = wpri_rephrase_post( $id, false );
+	$id = wpri_ajax_bootstrap();
+	$r  = wpri_rephrase_post( $id, false );
+	ob_end_clean();
 	if ( is_wp_error( $r ) ) {
 		wp_send_json_error( array( 'message' => $r->get_error_message() ) );
 	}
@@ -362,12 +382,9 @@ add_action( 'wp_ajax_wpri_apply', function () {
 } );
 
 add_action( 'wp_ajax_wpri_restore', function () {
-	check_ajax_referer( 'wpri_ajax', 'nonce' );
-	$id = absint( $_POST['post_id'] ?? 0 );
-	if ( ! $id || ! current_user_can( 'edit_post', $id ) ) {
-		wp_send_json_error( array( 'message' => 'Permissions insuffisantes.' ) );
-	}
-	$r = wpri_restore_post( $id );
+	$id = wpri_ajax_bootstrap();
+	$r  = wpri_restore_post( $id );
+	ob_end_clean();
 	if ( is_wp_error( $r ) ) {
 		wp_send_json_error( array( 'message' => $r->get_error_message() ) );
 	}
@@ -463,7 +480,7 @@ add_action( 'admin_footer', function () {
 		function ajax(action, cb){
 			var fd = new FormData();
 			fd.append('action', action);
-			fd.append('nonce', nonce);
+			fd.append('_wpri_nonce', nonce);
 			fd.append('post_id', pid);
 			fetch(ajaxUrl, {method:'POST', body:fd, credentials:'same-origin'})
 				.then(function(r){ return r.json(); })
